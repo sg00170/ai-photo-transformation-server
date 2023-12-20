@@ -16,7 +16,7 @@ os.system("net start mysql80")
 log("AI 포토존 프로그램 DB 시작 완료")
 
 log("AI 포토존 프로그램 시작")
-os.system("start /d \"C:\\Users\\misun\\PycharmProjects\\nauthybomb\\dist\\main\\\" /b main.exe")
+os.system("start /d \"C:\\Users\\misun\\PycharmProjects\\naughtybomb\\dist\\main\\\" /b main.exe")
 log("AI 포토존 프로그램 시작 완료")
 
 log("AI 포토존 프로그램 준비 완료...")

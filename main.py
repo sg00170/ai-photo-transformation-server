@@ -59,7 +59,8 @@ def resource_path(relative_path):
         # PyInstaller에 의해 임시폴더에서 실행될 경우 임시폴더로 접근하는 함수
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        # base_path = os.path.abspath(".")
+        base_path = ''
     return os.path.join(base_path, relative_path)
 
 def set_strength_range(min = 0.5, max = 0.5):
@@ -109,19 +110,26 @@ def process(mod = 0):
                 (UserTransformationState.PROCESSING.value, prompt_setting[prompt_setting_columns.index('id')], user_id)
             )
             connect.commit()
-
+            
             # 이미지 로드 및 변환
-            filename = f"{user[user_columns.index('request_time')]}_nauthybomb"
-            origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
-            image = np.array(origin_image)
-            origin_image = origin_image.convert("L")
-            low_threshold = 100
-            high_threshold = 200
-            image = cv2.Canny(image, low_threshold, high_threshold)
-            image = image[:, :, None]
-            image = np.concatenate([image, image, image], axis=2)
-            control_image = Image.fromarray(image)
-            # 컨트롤러 및 모델 셋팅
+            try:
+                filename = f"{user[user_columns.index('request_time')]}_naughtybomb"
+                origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
+                image = np.array(origin_image)
+                origin_image = origin_image.convert("L")
+                low_threshold = 100
+                high_threshold = 200
+                image = cv2.Canny(image, low_threshold, high_threshold)
+                image = image[:, :, None]
+                image = np.concatenate([image, image, image], axis=2)
+                control_image = Image.fromarray(image)
+            except Exception as e:
+                cursor.execute('delete from users where id = %s', (user_id))
+                connect.commit()
+                connect.close()
+                log(f"image exception 발생...")
+                
+             # 컨트롤러 및 모델 셋팅
             controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
             pipe = StableDiffusionControlNetImg2ImgPipeline.from_single_file(
                 resource_path("./models/" + prompt_setting[prompt_setting_columns.index('model')] + ".safetensors"),
@@ -167,11 +175,11 @@ def process(mod = 0):
             end = time.time()
             log(f"<MOD{mod}> 이미지 변환 {end - start:.5f} 소요 / Strength: {strength} / step: {step} / lora: {prompt_setting[prompt_setting_columns.index('lora_scale')]}")
             # 이미지 저장
-            image.save(f"C:\\Apache24\\htdocs\\nauthybomb\\public\\images\\transformation\\{filename}.png")
+            image.save(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\transformation\\{filename}.png")
             #워터마크 및 영상 저장
             watermark = cv2.imread(resource_path('./assets/watermark.png'), cv2.IMREAD_UNCHANGED)
-            origin = cv2.imread(f"C:\\Apache24\\htdocs\\nauthybomb\\public\\images\\origin\\{filename}.png")
-            transformation = cv2.imread(f"C:\\Apache24\\htdocs\\nauthybomb\\public\\images\\transformation\\{filename}.png")
+            origin = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\origin\\{filename}.png")
+            transformation = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\transformation\\{filename}.png")
 
             _, mask = cv2.threshold(watermark[:,:,3], 1, 255, cv2.THRESH_BINARY)
             mask_inv = cv2.bitwise_not(mask)
@@ -192,7 +200,22 @@ def process(mod = 0):
                 image[image_h-h-10:image_h-10, image_w-w-10:image_w-10] = combined
                 masked_images.append(image)
                 # 워터마크 이미지 저장
-                cv2.imwrite(f"C:\\Apache24\\htdocs\\nauthybomb\\public\\images\\{name}\\{filename}.png", image)
+                cv2.imwrite(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\{name}\\{filename}.png", image)
+                # 이미지 원격 업로드
+                cnOptions = pysftp.CnOpts()
+                cnOptions.hostkeys = None
+                with pysftp.Connection(
+                    host=os.environ.get('SFTP_HOST'),
+                    port=os.environ.get('SFTP_PORT'),
+                    username=os.environ.get('SFTP_USERNAME'),
+                    private_key=os.environ.get('SFTP_KEY'),
+                    cnopts=cnOptions,
+                ) as sftp:
+                    sftp.put(
+                        f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\{name}\\{filename}.png", 
+                        preserve_mtime=True,
+                        remotepath=f"/var/www/server/storage/app/public/{name}/{filename}.png"
+                    )
                 # 영상용 이미지 생성
                 count = 1
                 while(count <= fps):
@@ -206,9 +229,24 @@ def process(mod = 0):
                 masked_video_frames.insert(fps + count - 1, frame)
                 count += 1
             # 디졸빙효과 영상 생성
-            output = cv2.VideoWriter(f"C:\\Apache24\\htdocs\\nauthybomb\\public\\images\\video\\{filename}.mp4", fourcc=cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps=fps, frameSize=[512, 512])
+            output = cv2.VideoWriter(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\video\\{filename}.mp4", fourcc=cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps=fps, frameSize=[512, 512])
             for image in masked_video_frames:
                 output.write(image)
+            # 영상 원격 업로드
+            cnOptions = pysftp.CnOpts()
+            cnOptions.hostkeys = None
+            with pysftp.Connection(
+                host=os.environ.get('SFTP_HOST'),
+                port=os.environ.get('SFTP_PORT'),
+                username=os.environ.get('SFTP_USERNAME'),
+                private_key=os.environ.get('SFTP_KEY'),
+                cnopts=cnOptions,
+            ) as sftp:
+                sftp.put(
+                    f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\video\\{filename}.png", 
+                    preserve_mtime=True,
+                    remotepath=f"/var/www/server/storage/app/public/video/{filename}.png"
+                )
             # 프로세스 완료 처리
             cursor.execute(
                 'update users set state = %s, process_time = %s where id = %s',
