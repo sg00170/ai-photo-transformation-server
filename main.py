@@ -18,9 +18,36 @@ from diffusers import (
 import numpy as np
 from PIL import Image
 import math
+import pysftp
+import logging
+from logging import handlers
+
+# Resource
+def resource_path(relative_path):
+    try:
+        # PyInstaller에 의해 임시폴더에서 실행될 경우 임시폴더로 접근하는 함수
+        base_path = sys._MEIPASS
+    except Exception:
+        # base_path = os.path.abspath(".")
+        base_path = ''
+    return os.path.join(base_path, (relative_path[2:]).replace('/', '\\'))
 
 load_dotenv()
 scheduler = BackgroundScheduler()
+logger = logging.getLogger('main')
+daily_log_formatter = logging.Formatter('[%(asctime)s] %(levelname)s(Line:%(lineno)d): %(message)s')
+daliy_log_handler = handlers.TimedRotatingFileHandler(
+    filename=resource_path('./logs/naughtybom.log'),
+    when='midnight',
+    interval=1,
+    encoding='utf-8'
+)
+daliy_log_handler.setFormatter(daily_log_formatter)
+daliy_log_handler.suffix = "%Y%m%d"
+logger.setLevel(logging.INFO)
+logger.addHandler(daliy_log_handler)
+
+# DTO
 user_columns = [
     'id', 'prompt_setting_id', 'phone_number', 'gender', 'request_time',
     'state', 'process_time', 'created_at', 'updated_at', 'deleted_at'
@@ -31,6 +58,7 @@ prompt_setting_columns = [
     'grade', 'created_at', 'updated_at', 'deleted_at'
 ]
 
+# Enum
 class UserTransformationState(Enum):
     PENDING = 0
     PROCESSING = 1
@@ -50,18 +78,14 @@ class PromptSettingGrade(Enum):
     E = 9
     F = 10
 
-def log(str = ''):
-    return print(f"[{strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] {str}")
-
-# Resource
-def resource_path(relative_path):
-    try:
-        # PyInstaller에 의해 임시폴더에서 실행될 경우 임시폴더로 접근하는 함수
-        base_path = sys._MEIPASS
-    except Exception:
-        # base_path = os.path.abspath(".")
-        base_path = ''
-    return os.path.join(base_path, relative_path)
+def log(str = '', level = logging.INFO):
+    if (level == logging.INFO):
+        logger.info(str)
+    elif (level == logging.DEBUG):
+        logger.debug(str)
+    else :
+        logger.error(str)
+    print(f"[{strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] {str}")
 
 def set_strength_range(min = 0.5, max = 0.5):
     ranges = []
@@ -115,6 +139,7 @@ def process(mod = 0):
             try:
                 filename = f"{user[user_columns.index('request_time')]}_naughtybomb"
                 origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
+                origin_image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
                 image = np.array(origin_image)
                 origin_image = origin_image.convert("L")
                 low_threshold = 100
@@ -124,12 +149,16 @@ def process(mod = 0):
                 image = np.concatenate([image, image, image], axis=2)
                 control_image = Image.fromarray(image)
             except Exception as e:
-                cursor.execute('delete from users where id = %s', (user_id))
+                cursor.execute(
+                    'update users set state = %s, where id = %s',
+                    (UserTransformationState.PENDING.value, user_id)
+                )
                 connect.commit()
                 connect.close()
-                log(f"image exception 발생...")
+                log(f"image exception 발생...", logging.ERROR)
+                log(e)
                 
-             # 컨트롤러 및 모델 셋팅
+            # 컨트롤러 및 모델 셋팅
             controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
             pipe = StableDiffusionControlNetImg2ImgPipeline.from_single_file(
                 resource_path("./models/" + prompt_setting[prompt_setting_columns.index('model')] + ".safetensors"),
@@ -150,7 +179,6 @@ def process(mod = 0):
             pipe.load_textual_inversion(resource_path("./embeddings/UnrealisticDream.pt"), token="UnrealisticDream")
             pipe.load_textual_inversion(resource_path("./embeddings/DarkFantasy.pt"), token="DarkFantasy")
             pipe.enable_model_cpu_offload()
-
             # 이미지 변환
             generator = torch.manual_seed(0)
             step = prompt_setting[prompt_setting_columns.index('step')]
@@ -175,12 +203,13 @@ def process(mod = 0):
             end = time.time()
             log(f"<MOD{mod}> 이미지 변환 {end - start:.5f} 소요 / Strength: {strength} / step: {step} / lora: {prompt_setting[prompt_setting_columns.index('lora_scale')]}")
             # 이미지 저장
-            image.save(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\transformation\\{filename}.png")
+            image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
             #워터마크 및 영상 저장
-            watermark = cv2.imread(resource_path('./assets/watermark.png'), cv2.IMREAD_UNCHANGED)
-            origin = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\origin\\{filename}.png")
-            transformation = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\transformation\\{filename}.png")
-
+            watermark_array = np.fromfile(resource_path('./assets/watermark.png'), np.uint8)
+            # watermark = cv2.imread(resource_path('./assets/watermark.png'), cv2.IMREAD_UNCHANGED)
+            watermark = cv2.imdecode(watermark_array, cv2.IMREAD_UNCHANGED)
+            origin = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
+            transformation = cv2.imread(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
             _, mask = cv2.threshold(watermark[:,:,3], 1, 255, cv2.THRESH_BINARY)
             mask_inv = cv2.bitwise_not(mask)
 
@@ -192,30 +221,32 @@ def process(mod = 0):
             fps = 30
             for name, image in {'origin': origin, 'transformation': transformation}.items():
                 image_h, image_w = image.shape[:2]
-                roi = image[image_h-h-10:image_h-10, image_w-w-10:image_w-10]
+                roi = image[image_h-h-20:image_h-20, image_w-w-20:image_w-20]
                 masked_watermark = cv2.bitwise_and(watermark, watermark, mask=mask)
                 masked_image = cv2.bitwise_and(roi, roi, mask=mask_inv)
-                
                 combined = masked_watermark + masked_image
-                image[image_h-h-10:image_h-10, image_w-w-10:image_w-10] = combined
+                image[image_h-h-20:image_h-20, image_w-w-20:image_w-20] = combined
                 masked_images.append(image)
                 # 워터마크 이미지 저장
-                cv2.imwrite(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\{name}\\{filename}.png", image)
-                # 이미지 원격 업로드
+                cv2.imwrite(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{name}\\{filename}.png", image)
+                # 이미지 원격
                 cnOptions = pysftp.CnOpts()
-                cnOptions.hostkeys = None
-                with pysftp.Connection(
-                    host=os.environ.get('SFTP_HOST'),
-                    port=os.environ.get('SFTP_PORT'),
-                    username=os.environ.get('SFTP_USERNAME'),
-                    private_key=os.environ.get('SFTP_KEY'),
-                    cnopts=cnOptions,
-                ) as sftp:
-                    sftp.put(
-                        f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\{name}\\{filename}.png", 
-                        preserve_mtime=True,
-                        remotepath=f"/var/www/server/storage/app/public/{name}/{filename}.png"
-                    )
+                try: 
+                    with pysftp.Connection(
+                        host=os.environ.get('SFTP_HOST'),
+                        username=os.environ.get('SFTP_USERNAME'),
+                        private_key=resource_path(os.environ.get('SFTP_KEY')),
+                        cnopts=cnOptions,
+                    ) as sftp:
+                        sftp.put(
+                            f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{name}\\{filename}.png", 
+                            preserve_mtime=True,
+                            remotepath=f"/var/www/server/storage/app/public/{name}/{filename}.png"
+                        )
+                        sftp.close()
+                except Exception as e:
+                    log(f"pysftp exception image 발생...", logging.ERROR)
+                    log(e)
                 # 영상용 이미지 생성
                 count = 1
                 while(count <= fps):
@@ -229,24 +260,30 @@ def process(mod = 0):
                 masked_video_frames.insert(fps + count - 1, frame)
                 count += 1
             # 디졸빙효과 영상 생성
-            output = cv2.VideoWriter(f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\video\\{filename}.mp4", fourcc=cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps=fps, frameSize=[512, 512])
+            output = cv2.VideoWriter(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4", fourcc=cv2.VideoWriter_fourcc(*'DIVX'), fps=fps, frameSize=[1080, 1920])
             for image in masked_video_frames:
                 output.write(image)
+            output.release()
+            os.system(f"ffmpeg -i C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4 -vcodec libx264 C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
             # 영상 원격 업로드
             cnOptions = pysftp.CnOpts()
-            cnOptions.hostkeys = None
-            with pysftp.Connection(
-                host=os.environ.get('SFTP_HOST'),
-                port=os.environ.get('SFTP_PORT'),
-                username=os.environ.get('SFTP_USERNAME'),
-                private_key=os.environ.get('SFTP_KEY'),
-                cnopts=cnOptions,
-            ) as sftp:
-                sftp.put(
-                    f"C:\\Apache24\\htdocs\\naughtybomb\\public\\images\\video\\{filename}.png", 
-                    preserve_mtime=True,
-                    remotepath=f"/var/www/server/storage/app/public/video/{filename}.png"
-                )
+            try: 
+                with pysftp.Connection(
+                    host=os.environ.get('SFTP_HOST'),
+                    username=os.environ.get('SFTP_USERNAME'),
+                    private_key=resource_path(os.environ.get('SFTP_KEY')),
+                    cnopts=cnOptions,
+                ) as sftp:
+                    sftp.put(
+                        f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4", 
+                        preserve_mtime=True,
+                        remotepath=f"/var/www/server/storage/app/public/video/{filename}.mp4"
+                    )
+                    sftp.close()
+            except Exception as e:
+                log(f"pysftp exception video 발생...", logging.ERROR)
+                log(e)
+            
             # 프로세스 완료 처리
             cursor.execute(
                 'update users set state = %s, process_time = %s where id = %s',
@@ -254,19 +291,26 @@ def process(mod = 0):
             )
             connect.commit()
             connect.close()
+            
+            # 생성된 이미지 & 영상 삭제
+            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
+            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
+            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4")
+            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
+            
             log(f"<MOD{mod}> 완료 ====================")
         else:
             log(f"<MOD{mod}> 처리할 내역이 없습니다...")
     except Exception as e:
         connect.rollback()
-        log(f"<MOD{mod}> exception 발생...")
-        log(e)
+        log(f"<MOD{mod}> exception 발생...", logging.ERROR)
+        log(e, logging.ERROR)
 
 @scheduler.scheduled_job('cron', second='*/10', id='process')
 def job1():
-    log(f"scheduler JOB start >>>>>")
+    log(f"scheduler JOB start >>>>>", logging.DEBUG)
     process()
-    log(f"scheduler JOB end >>>>>")
+    log(f"scheduler JOB end >>>>>", logging.DEBUG)
 
 # @scheduler.scheduled_job('interval', seconds=10, id='process_odd')
 # def job1():
@@ -283,4 +327,4 @@ scheduler.start()
 
 while True:
     time.sleep(1)
-    print(strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+    log(strftime('%Y-%m-%d %H:%M:%S', time.localtime()), logging.DEBUG)
