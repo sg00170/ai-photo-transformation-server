@@ -249,7 +249,7 @@ def process(mod = 0):
                     log(e)
                 # 영상용 이미지 생성
                 count = 1
-                while(count <= fps):
+                while(count <= (fps * 2)):
                     masked_video_frames.append(image)
                     count += 1
             # 디졸빙용 영상 이미지 생성
@@ -257,7 +257,7 @@ def process(mod = 0):
             while(count <= fps):
                 alpha = count / fps
                 frame = cv2.addWeighted(masked_images[0], 1 - alpha, masked_images[1], alpha, 0)
-                masked_video_frames.insert(fps + count - 1, frame)
+                masked_video_frames.insert((fps * 2) + count - 1, frame)
                 count += 1
             # 디졸빙효과 영상 생성
             output = cv2.VideoWriter(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4", fourcc=cv2.VideoWriter_fourcc(*'DIVX'), fps=fps, frameSize=[1080, 1920])
