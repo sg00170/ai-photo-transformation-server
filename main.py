@@ -150,7 +150,7 @@ def process(mod = 0):
                 control_image = Image.fromarray(image)
             except Exception as e:
                 cursor.execute(
-                    'update users set state = %s, where id = %s',
+                    'update users set state = %s where id = %s',
                     (UserTransformationState.PENDING.value, user_id)
                 )
                 connect.commit()
