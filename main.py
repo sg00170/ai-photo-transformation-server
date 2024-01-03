@@ -141,7 +141,6 @@ def process(mod = 0):
                 origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
                 origin_image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
                 image = np.array(origin_image)
-                origin_image = origin_image.convert("L")
                 low_threshold = 100
                 high_threshold = 200
                 image = cv2.Canny(image, low_threshold, high_threshold)
@@ -178,6 +177,7 @@ def process(mod = 0):
             pipe.load_textual_inversion(resource_path("./embeddings/style-rustmagic.pt"), token="style-rustmagic")
             pipe.load_textual_inversion(resource_path("./embeddings/UnrealisticDream.pt"), token="UnrealisticDream")
             pipe.load_textual_inversion(resource_path("./embeddings/DarkFantasy.pt"), token="DarkFantasy")
+            pipe.load_textual_inversion(resource_path("./embeddings/easynegative.safetensor"), token="EasyNegative")
             pipe.enable_model_cpu_offload()
             # 이미지 변환
             generator = torch.manual_seed(0)
