@@ -177,7 +177,7 @@ def process(mod = 0):
             pipe.load_textual_inversion(resource_path("./embeddings/style-rustmagic.pt"), token="style-rustmagic")
             pipe.load_textual_inversion(resource_path("./embeddings/UnrealisticDream.pt"), token="UnrealisticDream")
             pipe.load_textual_inversion(resource_path("./embeddings/DarkFantasy.pt"), token="DarkFantasy")
-            pipe.load_textual_inversion(resource_path("./embeddings/easynegative.safetensor"), token="EasyNegative")
+            pipe.load_textual_inversion(resource_path("./embeddings/easynegative.safetensors"), weight_name="easynegative.safetensors", token="EasyNegative")
             pipe.enable_model_cpu_offload()
             # 이미지 변환
             generator = torch.manual_seed(0)
