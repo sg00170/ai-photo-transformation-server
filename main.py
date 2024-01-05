@@ -32,6 +32,7 @@ def resource_path(relative_path):
         base_path = ''
     return os.path.join(base_path, (relative_path[2:]).replace('/', '\\'))
 
+# 기본 설정
 load_dotenv()
 scheduler = BackgroundScheduler()
 logger = logging.getLogger('main')
@@ -46,6 +47,54 @@ daliy_log_handler.setFormatter(daily_log_formatter)
 daliy_log_handler.suffix = "%Y%m%d"
 logger.setLevel(logging.INFO)
 logger.addHandler(daliy_log_handler)
+
+# 앱 환경 설정 확인
+def is_production():
+    return os.environ.get('APP_ENV') == 'production'
+
+def save_file_sftp(type, filename):
+    cnOptions = pysftp.CnOpts()
+    try: 
+        with pysftp.Connection(
+            host=os.environ.get('SFTP_HOST'),
+            username=os.environ.get('SFTP_USERNAME'),
+            private_key=resource_path(os.environ.get('SFTP_KEY')),
+            cnopts=cnOptions,
+        ) as sftp:
+            sftp.put(
+                f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{type}\\{filename}.png", 
+                preserve_mtime=True,
+                remotepath=f"/var/www/server/storage/app/public/{type}/{filename}.png"
+            )
+            sftp.close()
+    except Exception as e:
+        log(f"pysftp exception {type} 오류 발생...", logging.ERROR)
+        log(e)
+
+def log(str = '', level = logging.INFO):
+    if (level == logging.INFO):
+        logger.info(str)
+    elif (level == logging.DEBUG):
+        logger.debug(str)
+    else :
+        logger.error(str)
+    print(f"[{strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] {str}")
+
+# 검정 이미지 체크
+def is_black_image(image):
+    pixel = np.array(image)
+    width, height = image.size
+    black = np.array([0, 0, 0])
+    for pixel in [pixel[0][0], pixel[0][width - 1], pixel[height - 1][0], pixel[height - 1][width - 1]]:
+        if(np.array_equal(pixel, black)): return True
+    return False
+
+def set_strength_range(min = 0.5, max = 0.5):
+    ranges = []
+    while(min <= max):
+        ranges.append(min)
+        min += 0.1
+    return ranges
 
 # DTO
 user_columns = [
@@ -78,33 +127,18 @@ class PromptSettingGrade(Enum):
     E = 9
     F = 10
 
-def log(str = '', level = logging.INFO):
-    if (level == logging.INFO):
-        logger.info(str)
-    elif (level == logging.DEBUG):
-        logger.debug(str)
-    else :
-        logger.error(str)
-    print(f"[{strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] {str}")
-
-def set_strength_range(min = 0.5, max = 0.5):
-    ranges = []
-    while(min <= max):
-        ranges.append(min)
-        min += 0.1
-    return ranges
-
 # 스케쥴러에서 실행될 함수
 def process(mod = 0):
+    connect = pymysql.connect(
+        host=os.environ.get('DB_HOST'),
+        user=os.environ.get('DB_USERNAME'),
+        password=os.environ.get('DB_PASSWORD'),
+        db=os.environ.get('DB_DATABASE'),
+        charset='utf8'
+    )
+    cursor = connect.cursor()
+    
     try:
-        connect = pymysql.connect(
-            host=os.environ.get('DB_HOST'),
-            user=os.environ.get('DB_USERNAME'),
-            password=os.environ.get('DB_PASSWORD'),
-            db=os.environ.get('DB_DATABASE'),
-            charset='utf8'
-        )
-        cursor = connect.cursor()
         # cursor.execute(
         #     'select * from users where state = %s and MOD(id, 2) = %s order by id asc limit 1 for update',
         #     (UserTransformationState.PENDING.value, int(mod))
@@ -116,7 +150,7 @@ def process(mod = 0):
         user = cursor.fetchone()
         if (user != None):
             user_id = user[user_columns.index('id')]
-            log(f"<MOD{mod}> {user_id} - {user[user_columns.index('phone_number')]} 진행 =====")
+            log(f"<MOD{mod}> {user_id} - {user[user_columns.index('phone_number')]} - {user[user_columns.index('request_time')]} 진행 =====")
             # 대기 인원
             cursor.execute(
                 'select count(*) from users where state = %s and MOD(id, 2) = %s and id != %s',
@@ -138,15 +172,20 @@ def process(mod = 0):
             # 이미지 로드 및 변환
             try:
                 filename = f"{user[user_columns.index('request_time')]}_naughtybomb"
-                origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
-                origin_image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
+                if(is_production()): 
+                    origin_image = load_image(f"{os.environ.get('ORIGIN_URL')}{filename}.png")
+                    origin_image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
+                else:
+                    origin_image = load_image(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
                 image = np.array(origin_image)
-                low_threshold = 100
+                low_threshold = 0
                 high_threshold = 200
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 image = cv2.Canny(image, low_threshold, high_threshold)
                 image = image[:, :, None]
                 image = np.concatenate([image, image, image], axis=2)
                 control_image = Image.fromarray(image)
+                control_image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}_canny.png")
             except Exception as e:
                 cursor.execute(
                     'update users set state = %s where id = %s',
@@ -204,6 +243,7 @@ def process(mod = 0):
             log(f"<MOD{mod}> 이미지 변환 {end - start:.5f} 소요 / Strength: {strength} / step: {step} / lora: {prompt_setting[prompt_setting_columns.index('lora_scale')]}")
             # 이미지 저장
             image.save(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
+            if(is_black_image(image)): raise Exception('Black 이미지 생성 -- 재시도!!')
             #워터마크 및 영상 저장
             watermark_array = np.fromfile(resource_path('./assets/watermark.png'), np.uint8)
             # watermark = cv2.imread(resource_path('./assets/watermark.png'), cv2.IMREAD_UNCHANGED)
@@ -229,24 +269,9 @@ def process(mod = 0):
                 masked_images.append(image)
                 # 워터마크 이미지 저장
                 cv2.imwrite(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{name}\\{filename}.png", image)
-                # 이미지 원격
-                cnOptions = pysftp.CnOpts()
-                try: 
-                    with pysftp.Connection(
-                        host=os.environ.get('SFTP_HOST'),
-                        username=os.environ.get('SFTP_USERNAME'),
-                        private_key=resource_path(os.environ.get('SFTP_KEY')),
-                        cnopts=cnOptions,
-                    ) as sftp:
-                        sftp.put(
-                            f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{name}\\{filename}.png", 
-                            preserve_mtime=True,
-                            remotepath=f"/var/www/server/storage/app/public/{name}/{filename}.png"
-                        )
-                        sftp.close()
-                except Exception as e:
-                    log(f"pysftp exception image 발생...", logging.ERROR)
-                    log(e)
+                # 이미지 원격 전송
+                if(is_production()): save_file_sftp(name, filename)
+              
                 # 영상용 이미지 생성
                 count = 1
                 while(count <= (fps * 2)):
@@ -266,23 +291,7 @@ def process(mod = 0):
             output.release()
             os.system(f"ffmpeg -i C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4 -vcodec libx264 C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
             # 영상 원격 업로드
-            cnOptions = pysftp.CnOpts()
-            try: 
-                with pysftp.Connection(
-                    host=os.environ.get('SFTP_HOST'),
-                    username=os.environ.get('SFTP_USERNAME'),
-                    private_key=resource_path(os.environ.get('SFTP_KEY')),
-                    cnopts=cnOptions,
-                ) as sftp:
-                    sftp.put(
-                        f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4", 
-                        preserve_mtime=True,
-                        remotepath=f"/var/www/server/storage/app/public/video/{filename}.mp4"
-                    )
-                    sftp.close()
-            except Exception as e:
-                log(f"pysftp exception video 발생...", logging.ERROR)
-                log(e)
+            if(is_production()): save_file_sftp('video', filename)
             
             # 프로세스 완료 처리
             cursor.execute(
@@ -293,17 +302,27 @@ def process(mod = 0):
             connect.close()
             
             # 생성된 이미지 & 영상 삭제
-            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
-            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
-            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4")
-            os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
+            if(is_production()):
+                os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\origin\\{filename}.png")
+                os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\transformation\\{filename}.png")
+                os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4")
+                os.remove(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
             
             log(f"<MOD{mod}> 완료 ====================")
         else:
             log(f"<MOD{mod}> 처리할 내역이 없습니다...")
     except Exception as e:
-        connect.rollback()
-        log(f"<MOD{mod}> exception 발생...", logging.ERROR)
+        if(user_id): 
+            cursor.execute(
+                'update users set state = %s where id = %s',
+                (UserTransformationState.PENDING.value, user_id)
+            )
+            connect.commit()
+            log(f"<MOD{mod}> exception 발생... 다시 시도!!", logging.ERROR)
+        else: 
+            connect.rollback()
+            log(f"<MOD{mod}> exception 발생... 롤백", logging.ERROR)
+        connect.close()
         log(e, logging.ERROR)
 
 @scheduler.scheduled_job('cron', second='*/10', id='process')
