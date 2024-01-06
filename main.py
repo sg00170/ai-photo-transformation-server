@@ -62,9 +62,9 @@ def save_file_sftp(type, filename):
             cnopts=cnOptions,
         ) as sftp:
             sftp.put(
-                f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{type}\\{filename}.png", 
+                f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{type}\\{filename}", 
                 preserve_mtime=True,
-                remotepath=f"/var/www/server/storage/app/public/{type}/{filename}.png"
+                remotepath=f"/var/www/server/storage/app/public/{type}/{filename}"
             )
             sftp.close()
     except Exception as e:
@@ -270,7 +270,7 @@ def process(mod = 0):
                 # 워터마크 이미지 저장
                 cv2.imwrite(f"C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\{name}\\{filename}.png", image)
                 # 이미지 원격 전송
-                if(is_production()): save_file_sftp(name, filename)
+                if(is_production()): save_file_sftp(name, f"{filename}.png")
               
                 # 영상용 이미지 생성
                 count = 1
@@ -291,7 +291,7 @@ def process(mod = 0):
             output.release()
             os.system(f"ffmpeg -i C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}.mp4 -vcodec libx264 C:\\Apache24\\htdocs\\naughtybomb-web\\public\\images\\video\\{filename}_2.mp4")
             # 영상 원격 업로드
-            if(is_production()): save_file_sftp('video', filename)
+            if(is_production()): save_file_sftp('video', f"{filename}.mp4")
             
             # 프로세스 완료 처리
             cursor.execute(
